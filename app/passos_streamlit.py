@@ -40,12 +40,45 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. CARREGAMENTO DE DADOS E MODELO
+# 2. CARREGAMENTO DE DADOS E MODELO (DINÂMICO PARA DEPLOY)
 # ==============================================================================
+
+# Definição do diretório base (raiz do projeto) para caminhos absolutos
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def buscar_arquivo(nome_arquivo):
+    """Procura arquivo em /data, /app ou na raiz usando BASE_DIR."""
+    possiveis_caminhos = [
+        os.path.join(BASE_DIR, 'data', nome_arquivo),
+        os.path.join(BASE_DIR, 'app', nome_arquivo),
+        os.path.join(BASE_DIR, nome_arquivo),
+        os.path.join(os.getcwd(), nome_arquivo), # fallback diretório atual
+        nome_arquivo # fallback relativo simples
+    ]
+    for caminho in possiveis_caminhos:
+        if os.path.exists(caminho):
+            return caminho
+    return None
+
 @st.cache_data
 def carregar_dados():
+    caminho_csv = buscar_arquivo('dados_passos_magicos_limpos.csv')
+    
+    if not caminho_csv:
+        st.error(f"""
+        ### 🚨 Erro de Carregamento
+        O arquivo **'dados_passos_magicos_limpos.csv'** não foi encontrado.
+        
+        **Caminhos verificados:**
+        1. `{os.path.join(BASE_DIR, 'data', 'dados_passos_magicos_limpos.csv')}`
+        2. `{os.path.join(BASE_DIR, 'app', 'dados_passos_magicos_limpos.csv')}`
+        3. Root: `{os.path.join(BASE_DIR, 'dados_passos_magicos_limpos.csv')}`
+        """)
+        st.stop()
+        return pd.DataFrame()
+
     try:
-        df = pd.read_csv('dados_passos_magicos_limpos.csv')
+        df = pd.read_csv(caminho_csv)
         df.columns = [c.upper() for c in df.columns]
         df = df.loc[:, ~df.columns.duplicated()].copy()
 
@@ -53,7 +86,6 @@ def carregar_dados():
             df['ANO_PEDE'] = pd.to_numeric(df['ANO_PEDE'], errors='coerce').fillna(0).astype(int)
 
         # PEDRA: normalizar variantes de acentuação, manter NaN real
-        # NÃO usar fillna('Não Informado') — isso distorce gráficos
         if 'PEDRA' in df.columns:
             mapa_pedra = {
                 'quartzo': 'Quartzo', 'quarzo': 'Quartzo',
@@ -77,25 +109,37 @@ def carregar_dados():
                 s_num = re.sub(r'[A-Z]+$', '', s_num).strip()
                 s_num = re.sub(r'\.0$', '', s_num)
                 try: return f'Fase {int(float(s_num))}'
-                except: return s  # manter original se não parsear
+                except: return s
             df['FASE'] = df['FASE'].apply(_norm_fase)
 
-        # Ordem lógica das pedras como Categorical auxiliar apenas para ordenação em gráficos
-        # Mas não injetar 'Não Informado' como categoria padrão
         if 'PEDRA' in df.columns:
             ordem_pedras = ['Quartzo', 'Ágata', 'Ametista', 'Topázio']
             df['PEDRA'] = pd.Categorical(df['PEDRA'], categories=ordem_pedras, ordered=True)
 
         return df
     except Exception as e:
-        st.error(f'Erro ao carregar dados: {e}')
+        st.error(f'Falha crítica ao ler o CSV: {e}')
+        st.stop()
         return pd.DataFrame()
 
 @st.cache_resource
 def carregar_modelo():
+    # Tentar nomes comuns: risco ou simulador
+    nomes = ['modelo_risco_passos_magicos.pkl', 'modelo_simulador.pkl']
+    caminho_modelo = None
+    
+    for nome in nomes:
+        caminho_modelo = buscar_arquivo(nome)
+        if caminho_modelo: break
+        
+    if not caminho_modelo:
+        st.warning("⚠️ Modelo preditivo (.pkl) não encontrado. Algumas funcionalidades podem estar limitadas.")
+        return None
+
     try:
-        return joblib.load('modelo_risco_passos_magicos.pkl')
-    except:
+        return joblib.load(caminho_modelo)
+    except Exception as e:
+        st.info(f"O simulador está temporariamente indisponível (Erro: {e})")
         return None
 
 df = carregar_dados()
